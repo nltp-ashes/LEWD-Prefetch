@@ -1,0 +1,183 @@
+---==================================================================================================================---
+---                                                                                                                  ---
+---    Original Author(s) : NLTP_ASHES                                                                               ---
+---    Edited : N/A                                                                                                  ---
+---    Date : 18/02/2024                                                                                             ---
+---    License : CC0 1.0 Universal                                                                                   ---
+---                                                                                                                  ---
+---    Script used to prefetch models from section that have lewd_prefetch_world, or lewd_prefetch_hud set to true.  ---
+---    This is done because some of LEWD's guns are excessively big, and prefetching them can help reduce stutters.  ---
+---                                                                                                                  ---
+---==================================================================================================================---
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Constants, global variables and imported functions
+-- ---------------------------------------------------------------------------------------------------------------------
+
+debug_mode                   = true
+prefetch_world_field_name    = "lewd_prefetch_world"
+prefetch_hud_field_name      = "lewd_prefetch_hud"
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Main functions
+-- ---------------------------------------------------------------------------------------------------------------------
+
+--- Function used to prefetch models from some alife_objects.
+--- The condition for prefecthing is that the section must have lewd_prefetch_world, or lewd_prefetch_hud set to true.
+--- @return nil
+function prefetch_lewd_models()
+    ini_sys:section_for_each(function(sec)
+        -- Prefetch world model, if 'lewd_prefetch_world' is true
+        local prefetch_world, prefetch_world_mode = this.should_prefetch_model(sec, this.prefetch_world_field_name)
+        local world_model = prefetch_world and this.get_world_model_path(sec)
+        if world_model then
+            this.dbg_printf("[LEWD PREFETCH] Pre-fetching (mode: %s) world model : '%s'", prefetch_world_mode, world_model)
+            game.prefetch_model(world_model)
+        end
+
+        -- Prefetch HUD model, if 'lewd_prefetch_hud' is true
+        local prefetch_hud, prefetch_hud_mode = this.should_prefetch_model(sec, this.prefetch_hud_field_name)
+        local hud_model = prefetch_hud and this.get_hud_model_path(sec)
+        if hud_model then
+            this.dbg_printf("[LEWD PREFETCH] Pre-fetching (mode: %s) HUD model : '%s'", prefetch_hud_mode, hud_model)
+            game.prefetch_model(hud_model)
+        end
+    end)
+end
+
+--- Function used to determine if a model (world or HUD according to world_or_hud) should be prefetched.
+--- @param sec string
+--- @param world_or_hud string
+--- @return boolean
+function should_prefetch_model(sec, world_or_hud)
+    local prefetch_mode = ini_sys:r_string_ex(sec, world_or_hud)
+    if not prefetch_mode then
+        return false
+    end
+    local prefetch_modes = {
+        ["always"] = this.prefetch_mode_always,
+        ["exists"] = this.prefetch_mode_exists,
+        ["nearby"] = this.prefetch_mode_nearby
+    }
+    if not prefetch_modes[prefetch_mode] then
+        printf("![LEWD PREFETCH] | ERROR | Invalid prefetch mode '%s' found in section '%s'", prefetch_mode, sec)
+        return false
+    end
+    return prefetch_modes[prefetch_mode](sec), prefetch_mode
+end
+
+--- Function used to get the path (relative to 'gamedata/meshes') to the world model.
+--- @param sec string
+--- @return string
+function get_world_model_path(sec)
+    local world_model = ini_sys:r_string_ex(sec, "visual")
+    if not world_model then
+        printf("![LEWD PREFETCH] | ERROR | Section '%s' has no visual defined !", sec)
+        return
+    end
+    return world_model
+end
+
+--- Function used to get the path (relative to 'gamedata/meshes') to the HUD model.
+--- @param sec string
+--- @return string
+function get_hud_model_path(sec)
+    local hud_sec = ini_sys:r_string_ex(sec, "hud")
+    if not hud_sec then
+        printf("![LEWD PREFETCH] | ERROR | Section '%s' has no hud section defined !", sec)
+        return
+    end
+    local hud_model = ini_sys:r_string_ex(hud_sec, "item_visual")
+    if not hud_model then
+        printf("![LEWD PREFETCH] | ERROR | Section '%s' has no item_visual defined !", sec)
+        return
+    end
+    return hud_model
+end
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Pre-fetch modes functions
+-- ---------------------------------------------------------------------------------------------------------------------
+
+--- Function used to determine if a model should be prefetched, when using the mode 'always'.
+--- @param sec string
+--- @return boolean
+function prefetch_mode_always(sec)
+    return true
+end
+
+--- Function used to determine if a model should be prefetched, when using the mode 'exists'.
+--- Returns true if an alife_object exists for the given section.
+--- @param sec string
+--- @return boolean
+function prefetch_mode_exists(sec)
+    local exists = false
+    this.server_objects_iter(function(se_obj)
+        if se_obj:section_name() == sec then
+            exists = true
+            return true
+        end
+    end)
+    return exists
+end
+
+--- Function used to determine if a model should be prefetched, when using the mode 'nearby'.
+--- Returns true if an alife_object exists for the given section, and it is on the same level as the actor.
+--- @param sec string
+--- @return boolean
+function prefetch_mode_nearby(sec)
+    local nearby = false
+    this.server_objects_iter(function(se_obj)
+        if se_obj:section_name() == sec and simulation_objects.is_on_the_same_level(alife():actor(), se_obj) then
+            nearby = true
+            return true
+        end
+    end)
+    return nearby
+end
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Callbacks registration
+-- ---------------------------------------------------------------------------------------------------------------------
+
+--- Function used to register callbacks.
+--- @return nil
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", prefetch_lewd_models)
+end
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Utility functions
+-- ---------------------------------------------------------------------------------------------------------------------
+
+--- Function used to print information into the console/log file only when debug mode is enabled.
+--- @return nil
+function dbg_printf(...)
+    if debug_mode then
+        printf(...)
+    end
+end
+
+--- Function used to iterate through each existing server object.
+--- The function passed in arguments will be called once per game object, with a guarantee that the server object exists and isn't nil.
+--- Extra arguments passed to 'server_objects_iter' function are passed on to 'func' function.
+--- If 'func' function returns true, then the iteration stops.
+--- @param func function
+--- @param ... table
+--- @return nil
+function server_objects_iter(func, ...)
+    local args = {...}
+
+    if alife().iterate_object ~= nil then
+        alife():iterate_object(function(se_obj)
+            return func(se_obj, unpack(args))
+        end)
+    else
+        for id=0, 65534 do
+            local se_obj = alife_object(id)
+            if se_obj and func(se_obj, unpack(args)) then
+                return
+            end
+        end
+    end
+end
