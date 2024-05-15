@@ -14,7 +14,7 @@
 -- Constants, global variables and imported functions
 -- ---------------------------------------------------------------------------------------------------------------------
 
-debug_mode                   = true
+debug_mode                   = false
 prefetch_world_field_name    = "lewd_prefetch_world"
 prefetch_hud_field_name      = "lewd_prefetch_hud"
 
